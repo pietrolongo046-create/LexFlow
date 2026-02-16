@@ -23,7 +23,7 @@ function getHardwareId() {
       if (lines[1]) return lines[1].trim();
     }
   } catch {}
-  // Fallback: less secure but functional
+  // Fallback: less secure but functional (Motherboard + CPU Model)
   return os.hostname() + os.cpus()[0]?.model + os.totalmem();
 }
 
@@ -79,8 +79,10 @@ module.exports = {
       saveKeyToFile(key);
       return key;
     } catch (error) {
-      console.error('Errore chiave crittografia:', error);
-      return 'FALLBACK_KEY_EMERGENCY_ONLY_CHANGE_ME';
+      console.error('ERRORE CRITICO CRITTOGRAFIA:', error);
+      // SICUREZZA: Se fallisce la generazione della chiave hardware, l'app DEVE rompersi.
+      // Mai usare una chiave di fallback hardcoded.
+      throw new Error('CRITICAL_ENCRYPTION_FAILURE: Cannot derive secure hardware key.'); 
     }
   }
 };

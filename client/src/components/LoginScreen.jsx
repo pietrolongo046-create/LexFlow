@@ -7,6 +7,7 @@ export default function LoginScreen({ onUnlock }) {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('Sblocco...'); // Nuovo stato testo
   const [isNew, setIsNew] = useState(null);
   const [showPwd, setShowPwd] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
@@ -14,7 +15,7 @@ export default function LoginScreen({ onUnlock }) {
   const [bioFailed, setBioFailed] = useState(0);
   const [showPasswordField, setShowPasswordField] = useState(false);
   const bioTriggered = useRef(false);
-  const [recoveryCode, setRecoveryCode] = useState(null); // mostrato una sola volta
+  const [recoveryCode, setRecoveryCode] = useState(null);
 
   const MAX_BIO_ATTEMPTS = 3;
 
@@ -22,9 +23,8 @@ export default function LoginScreen({ onUnlock }) {
     window.api.vaultExists().then(exists => {
       const newVault = !exists;
       setIsNew(newVault);
-      if (newVault) setShowPasswordField(true); // Nuovo vault → mostra subito password
+      if (newVault) setShowPasswordField(true);
     });
-    // Check biometrics availability
     window.api.checkBio().then(available => {
       setBioAvailable(available);
       if (available) {
@@ -32,7 +32,6 @@ export default function LoginScreen({ onUnlock }) {
           setBioSaved(saved);
           if (saved && !bioTriggered.current) {
             bioTriggered.current = true;
-            // Auto-trigger Touch ID (solo se non è nuovo vault)
             setTimeout(() => {
               window.api.vaultExists().then(exists => {
                 if (exists) handleBioLogin(true);
@@ -81,14 +80,15 @@ export default function LoginScreen({ onUnlock }) {
     }
 
     setLoading(true);
+    setLoadingText('Verifica crittografica...'); // Feedback 1
+
     try {
+      setTimeout(() => setLoadingText('Decifrazione dati...'), 500); // Feedback simulato per UX
+      
       const result = await window.api.unlockVault(password);
       if (result.success) {
-        // After successful login, save for biometrics if available
-        if (bioAvailable) {
-          try { await window.api.saveBio(password); } catch {}
-        }
-        // Se nuovo vault, mostra recovery code
+        setLoadingText('Avvio applicazione...');
+        if (bioAvailable) { try { await window.api.saveBio(password); } catch {} }
         if (result.isNew && result.recoveryCode) {
           setRecoveryCode(result.recoveryCode);
         } else {
@@ -96,20 +96,22 @@ export default function LoginScreen({ onUnlock }) {
         }
       } else {
         setError(result.error || 'Password errata');
+        setLoading(false);
       }
     } catch {
       setError('Errore di sistema');
-    } finally {
       setLoading(false);
     }
   };
 
   const handleBioLogin = async (isAutomatic = false) => {
     setLoading(true);
+    setLoadingText('Autenticazione biometrica...');
     setError('');
     try {
       const savedPassword = await window.api.loginBio();
       if (savedPassword) {
+        setLoadingText('Sblocco vault...');
         const result = await window.api.unlockVault(savedPassword);
         if (result.success) {
           onUnlock();
@@ -132,13 +134,13 @@ export default function LoginScreen({ onUnlock }) {
       if (newCount >= MAX_BIO_ATTEMPTS) setShowPasswordField(true);
       if (!isAutomatic) setError('Riconoscimento annullato o fallito.');
     } finally {
-      setLoading(false);
+      if (!isAutomatic) setLoading(false); // Mantieni loading se auto, togli se manuale fallito
     }
   };
 
   if (isNew === null) return (
     <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="animate-pulse text-text-muted text-sm">Caricamento…</div>
+      <div className="animate-pulse text-text-muted text-sm">Caricamento sistema sicuro...</div>
     </div>
   );
 
@@ -146,42 +148,25 @@ export default function LoginScreen({ onUnlock }) {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background relative drag-region">
-      {/* Recovery Code Modal — mostrato una sola volta dopo creazione vault */}
       {recoveryCode && (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
           <div className="bg-card border border-primary/30 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl no-drag">
-            <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Lock size={28} className="text-primary" />
-            </div>
+            <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4"><Lock size={28} className="text-primary" /></div>
             <h2 className="text-xl font-bold text-text mb-2">Codice di Recupero</h2>
-            <p className="text-text-muted text-xs mb-6">
-              Salva questo codice in un luogo sicuro. <strong className="text-danger">Viene mostrato UNA SOLA VOLTA</strong> e ti permetterà di resettare il vault in emergenza.
-            </p>
+            <p className="text-text-muted text-xs mb-6">Salva questo codice. <strong className="text-danger">Viene mostrato UNA SOLA VOLTA</strong>.</p>
             <div className="bg-black/30 border border-white/10 rounded-xl p-4 mb-6 select-all">
               <p className="font-mono text-lg text-primary tracking-[3px] break-all">{recoveryCode}</p>
             </div>
-            <p className="text-[10px] text-text-dim mb-6">32 caratteri · Non sarà più recuperabile</p>
-            <button
-              onClick={() => {
-                navigator.clipboard?.writeText(recoveryCode);
-                setRecoveryCode(null);
-                onUnlock();
-              }}
-              className="btn-primary w-full justify-center"
-            >
-              Copia e Continua
-            </button>
+            <button onClick={() => { navigator.clipboard?.writeText(recoveryCode); setRecoveryCode(null); onUnlock(); }} className="btn-primary w-full justify-center">Copia e Continua</button>
           </div>
         </div>
       )}
 
-      {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
       </div>
 
       <div className="glass-card p-8 w-[400px] relative z-10 no-drag animate-slide-up">
-        {/* Logo */}
         <div className="flex flex-col items-center mb-8">
           <img src={logoSrc} alt="LexFlow" className="w-16 h-16 object-contain mb-4" draggable={false} />
           <h1 className="text-xl font-bold text-text">LexFlow</h1>
@@ -190,121 +175,67 @@ export default function LoginScreen({ onUnlock }) {
           </p>
         </div>
 
-        {/* Biometrics — auto-triggered, retry if still available */}
         {!isNew && bioAvailable && bioSaved && bioFailed < MAX_BIO_ATTEMPTS && !showPasswordField && (
           <div className="mb-4">
-            <button
-              type="button"
-              onClick={() => handleBioLogin(false)}
-              disabled={loading}
-              className="w-full py-3 bg-primary/10 hover:bg-primary/15 border border-primary/20 rounded-lg flex items-center justify-center gap-3 transition group"
-            >
+            <button type="button" onClick={() => handleBioLogin(false)} disabled={loading} className="w-full py-3 bg-primary/10 hover:bg-primary/15 border border-primary/20 rounded-lg flex items-center justify-center gap-3 transition group">
               <Fingerprint size={20} className="text-primary group-hover:scale-110 transition-transform" />
               <span className="text-sm font-semibold text-primary">Riprova Biometria</span>
             </button>
           </div>
         )}
 
-        {/* Password form — secondaria o per nuovo vault */}
         {(isNew || showPasswordField) && (
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Password */}
           <div className="relative">
             <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
-            <input
-              type={showPwd ? 'text' : 'password'}
-              className="input-field pl-10 pr-10"
-              placeholder="Master Password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              autoFocus
-            />
-            <button
-              type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-text-dim hover:text-text transition"
-              onClick={() => setShowPwd(!showPwd)}
-            >
+            <input type={showPwd ? 'text' : 'password'} className="input-field pl-10 pr-10" placeholder="Master Password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
+            <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-text-dim hover:text-text transition" onClick={() => setShowPwd(!showPwd)}>
               {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
 
-          {/* Strength meter (only for new vault) */}
           {isNew && password && (
             <div className="space-y-1">
               <div className="h-1.5 bg-border rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{ width: `${strength.pct}%`, background: strength.color }}
-                />
+                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${strength.pct}%`, background: strength.color }} />
               </div>
               <p className="text-xs text-right" style={{ color: strength.color }}>{strength.label}</p>
             </div>
           )}
 
-          {/* Confirm */}
           {isNew && (
             <div className="relative">
               <ShieldCheck size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
-              <input
-                type={showPwd ? 'text' : 'password'}
-                className="input-field pl-10"
-                placeholder="Conferma Password"
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-              />
+              <input type={showPwd ? 'text' : 'password'} className="input-field pl-10" placeholder="Conferma Password" value={confirm} onChange={e => setConfirm(e.target.value)} />
             </div>
           )}
 
-          {/* Error */}
-          {error && (
-            <p className="text-danger text-xs text-center animate-shake">{error}</p>
-          )}
+          {error && <p className="text-danger text-xs text-center animate-shake">{error}</p>}
 
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full justify-center"
-          >
+          <button type="submit" disabled={loading} className="btn-primary w-full justify-center">
             {loading ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                {isNew ? 'Creazione…' : 'Sblocco…'}
+                {loadingText}
               </span>
-            ) : (
-              isNew ? 'Crea Vault' : 'Sblocca'
-            )}
+            ) : (isNew ? 'Crea Vault' : 'Sblocca')}
           </button>
         </form>
         )}
 
-        {/* Error fuori dal form (per errori bio) */}
-        {!showPasswordField && !isNew && error && (
-          <p className="text-danger text-xs text-center animate-shake mt-4">{error}</p>
-        )}
+        {!showPasswordField && !isNew && error && <p className="text-danger text-xs text-center animate-shake mt-4">{error}</p>}
 
-        {/* Reset vault — password dimenticata */}
         {!isNew && (
           <div className="mt-4 text-center">
-            <button
-              type="button"
-              onClick={async () => {
+            <button type="button" onClick={async () => {
                 const result = await window.api.resetVault();
-                if (result?.success) {
-                  setIsNew(true);
-                  setPassword('');
-                  setConfirm('');
-                  setError('');
-                }
-              }}
-              className="text-text-dim hover:text-danger text-[11px] underline underline-offset-2 transition"
-            >
+                if (result?.success) { setIsNew(true); setPassword(''); setConfirm(''); setError(''); }
+              }} className="text-text-dim hover:text-danger text-[11px] underline underline-offset-2 transition">
               Password dimenticata? Reset Vault
             </button>
           </div>
         )}
 
-        {/* Footer */}
         <div className="mt-6 flex items-center justify-center gap-2 text-text-dim text-[10px]">
           <Lock size={10} />
           <span>AES-256 · PBKDF2 · Zero-Knowledge</span>
