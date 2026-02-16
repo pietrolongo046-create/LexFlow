@@ -1,0 +1,22 @@
+# Dipendenze (I COLPEVOLI DEI 6GB)
+node_modules/
+client/node_modules/
+
+# File di Build e Release
+dist/
+client/dist/
+build/
+release/
+out/
+
+# Binari specifici
+*.dmg
+*.exe
+*.blockmap
+*.yml
+
+# Sistema e Editor
+.DS_Store
+.vscode/
+.env
+*.log
