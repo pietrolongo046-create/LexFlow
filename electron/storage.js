@@ -1,171 +1,183 @@
-const Database = require('better-sqlite3-multiple-ciphers');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
-const { app, safeStorage } = require('electron');
+const { app } = require('electron');
 
-const DB_PATH = path.join(app.getPath('userData'), 'lexflow_vault.db');
+// Percorsi dei file
+const DATA_PATH = path.join(app.getPath('userData'), 'lexflow_vault.enc');
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'lexflow_settings.json');
 
-let db = null;
-let ENCRYPTED_SESSION_KEY = null;
+const ALGORITHM = 'aes-256-gcm';
 
-// Helper per proteggere la chiave in RAM
-function protectKey(rawKeyString) {
-  if (safeStorage.isEncryptionAvailable()) {
-    ENCRYPTED_SESSION_KEY = safeStorage.encryptString(rawKeyString);
-  } else {
-    ENCRYPTED_SESSION_KEY = rawKeyString;
+// Cache in memoria (decifrata solo mentre l'app è sbloccata)
+let cachedKey = null;
+let memoryStore = {
+  practices: [],
+  agenda: []
+};
+
+// --- Helpers ---
+
+// Scrittura Atomica: Scrive su un file .tmp e poi rinomina.
+// Se il PC crasha durante la scrittura, il file originale rimane intatto.
+function writeAtomic(filePath, content) {
+  const tempPath = `${filePath}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.renameSync(tempPath, filePath); // Operazione atomica su OS moderni
+    return true;
+  } catch (e) {
+    console.error(`Errore scrittura atomica su ${filePath}:`, e);
+    return false;
   }
 }
 
-function getUnprotectedKey() {
-  if (!ENCRYPTED_SESSION_KEY) throw new Error('Vault locked');
-  if (safeStorage.isEncryptionAvailable() && Buffer.isBuffer(ENCRYPTED_SESSION_KEY)) {
-    return safeStorage.decryptString(ENCRYPTED_SESSION_KEY);
-  }
-  return ENCRYPTED_SESSION_KEY;
+// Derivazione chiave sicura (PBKDF2)
+function deriveKey(password, salt) {
+  // Salt deve essere un Buffer, Password una stringa
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+}
+
+// Genera hash per il codice di recupero
+function hashRecoveryCode(code, salt) {
+  return crypto.pbkdf2Sync(code, salt, 100000, 64, 'sha512').toString('hex');
 }
 
 module.exports = {
+  // Controlla se esiste un vault
   isVaultCreated() {
-    return fs.existsSync(DB_PATH);
+    return fs.existsSync(DATA_PATH);
   },
 
-  // Inizializza connessione SQLCipher
-  initDB(key) {
-    try {
-      db = new Database(DB_PATH);
-      db.pragma(`key='${key}'`);
-      
-      // Crea schema
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS practices (
-          id TEXT PRIMARY KEY,
-          data TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS agenda (
-          id TEXT PRIMARY KEY,
-          data TEXT NOT NULL,
-          date TEXT
-        );
-      `);
-      
-      // Test validità chiave
-      db.prepare('SELECT count(*) FROM sqlite_master').get();
-      return true;
-    } catch (e) {
-      if (db) { try { db.close(); } catch {} }
-      db = null;
-      return false;
-    }
-  },
-
+  // Sblocca o Crea il Vault
   async unlockVault(password) {
     try {
-      // Nota: In prod, il salt dovrebbe essere univoco per utente e salvato in settings.
-      // Qui usiamo un salt statico per semplicità di migrazione, ma meglio settings.salt
-      let settings = await this.getSettings();
-      let salt = settings.vaultSalt;
-      
-      let isNew = false;
-      if (!fs.existsSync(DB_PATH)) {
-        isNew = true;
-        salt = crypto.randomBytes(16).toString('hex');
-        settings.vaultSalt = salt;
-        await this.saveSettings(settings);
-      }
-
-      if (!salt) {
-          // Fallback per vecchi vault se necessario, o rigenera
-          salt = 'LEXFLOW_DEFAULT_SALT';
-      }
-
-      const key = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-      const success = this.initDB(key);
-      
-      if (!success) throw new Error('Password errata o database corrotto');
-      
-      protectKey(key);
-
-      let recoveryCode = null;
-      if (isNew) {
-        // Genera codice di recupero SOLO alla creazione
-        recoveryCode = crypto.randomBytes(8).toString('hex').toUpperCase(); // Es: A1B2-C3D4...
-        const recoverySalt = crypto.randomBytes(32).toString('hex');
-        const recoveryHash = crypto.pbkdf2Sync(recoveryCode, recoverySalt, 100000, 64, 'sha512').toString('hex');
+      // --- CREAZIONE NUOVO VAULT ---
+      if (!fs.existsSync(DATA_PATH)) {
+        const salt = crypto.randomBytes(16);
+        const key = deriveKey(password, salt);
+        cachedKey = key;
         
-        settings.recoveryHash = recoveryHash;
-        settings.recoverySalt = recoverySalt;
+        // Inizializza memoria vuota
+        memoryStore = { practices: [], agenda: [] };
+        
+        // Salva subito il file cifrato vuoto
+        this._saveToDisk(salt);
+        
+        // Genera Codice di Recupero (A1B2-C3D4...)
+        const recoveryCode = crypto.randomBytes(4).toString('hex').toUpperCase() + '-' + 
+                             crypto.randomBytes(4).toString('hex').toUpperCase();
+        
+        // Salva l'hash del codice di recupero nei settings
+        const settings = await this.getSettings();
+        const recSalt = crypto.randomBytes(16).toString('hex');
+        settings.recoveryHash = hashRecoveryCode(recoveryCode, recSalt);
+        settings.recoverySalt = recSalt;
         await this.saveSettings(settings);
+
+        return { success: true, isNew: true, recoveryCode };
       }
 
-      return { success: true, isNew, recoveryCode };
+      // --- SBLOCCO ESISTENTE ---
+      const fileContent = fs.readFileSync(DATA_PATH, 'utf8');
+      const json = JSON.parse(fileContent);
+      
+      const salt = Buffer.from(json.salt, 'hex');
+      const iv = Buffer.from(json.iv, 'hex');
+      const authTag = Buffer.from(json.authTag, 'hex');
+      const key = deriveKey(password, salt);
+
+      const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+      decipher.setAuthTag(authTag);
+      
+      let decrypted = decipher.update(json.data, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+
+      memoryStore = JSON.parse(decrypted);
+      cachedKey = key; // Salva la chiave in RAM
+      
+      return { success: true, isNew: false };
+
     } catch (e) {
-      console.error(e);
-      return { success: false, error: 'Password errata.' };
+      console.error('Unlock failed:', e);
+      cachedKey = null;
+      return { success: false, error: 'Password errata o file corrotto' };
     }
   },
 
+  // Blocca il Vault (cancella chiave e dati dalla RAM)
   lockVault() {
-    if (db) {
-      try { db.close(); } catch {}
-      db = null;
-    }
-    ENCRYPTED_SESSION_KEY = null;
+    cachedKey = null;
+    memoryStore = { practices: [], agenda: [] };
     return { success: true };
   },
 
-  // --- API DATI ---
+  // --- GESTIONE DATI ---
 
   async loadData() {
-    if (!db) throw new Error('Vault locked');
-    try {
-      const rows = db.prepare('SELECT data FROM practices').all();
-      return rows.map(r => JSON.parse(r.data));
-    } catch { return []; }
+    if (!cachedKey) throw new Error('Vault Locked');
+    return memoryStore.practices || [];
   },
 
   async saveData(practices) {
-    if (!db) throw new Error('Vault locked');
-    const insert = db.prepare('INSERT OR REPLACE INTO practices (id, data) VALUES (@id, @data)');
-    const deleteOld = db.prepare('DELETE FROM practices WHERE id NOT IN (' + practices.map(() => '?').join(',') + ')');
-    
-    const transaction = db.transaction((items) => {
-      if (items.length > 0) deleteOld.run(...items.map(p => p.id));
-      else db.prepare('DELETE FROM practices').run();
-
-      for (const p of items) {
-        insert.run({ id: p.id, data: JSON.stringify(p) });
-      }
-    });
-    
-    transaction(practices);
-    return { success: true };
+    if (!cachedKey) throw new Error('Vault Locked');
+    memoryStore.practices = practices;
+    this._saveToDisk();
+    return true;
   },
 
   async loadAgenda() {
-    if (!db) throw new Error('Vault locked');
-    try {
-      const rows = db.prepare('SELECT data FROM agenda').all();
-      return rows.map(r => JSON.parse(r.data));
-    } catch { return []; }
+    if (!cachedKey) throw new Error('Vault Locked');
+    return memoryStore.agenda || [];
   },
 
-  async saveAgenda(events) {
-    if (!db) throw new Error('Vault locked');
-    const insert = db.prepare('INSERT OR REPLACE INTO agenda (id, data, date) VALUES (@id, @data, @date)');
-    const deleteAll = db.prepare('DELETE FROM agenda');
+  async saveAgenda(agenda) {
+    if (!cachedKey) throw new Error('Vault Locked');
+    memoryStore.agenda = agenda;
+    this._saveToDisk();
+    return true;
+  },
+
+  // Helper interno per cifrare e scrivere su disco
+  _saveToDisk(forceSalt = null) {
+    if (!cachedKey) throw new Error("Tentativo di salvataggio senza chiave");
+
+    // Dobbiamo recuperare il salt originale dal file esistente per mantenere coerente la chiave derivata
+    // OPPURE usiamo quello passato in fase di creazione.
+    // In questo design semplificato: cachedKey è già derivata. 
+    // Il file su disco ha bisogno del sale per permettere la riapertura futura con la password.
     
-    const transaction = db.transaction((items) => {
-      deleteAll.run();
-      for (const ev of items) {
-        insert.run({ id: ev.id, data: JSON.stringify(ev), date: ev.date });
+    let saltHex;
+    if (forceSalt) {
+      saltHex = forceSalt.toString('hex');
+    } else {
+      // Leggi il sale dal file esistente per preservarlo
+      if (fs.existsSync(DATA_PATH)) {
+        const existing = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+        saltHex = existing.salt;
+      } else {
+         throw new Error("Impossibile recuperare il Salt crittografico");
       }
+    }
+
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(ALGORITHM, cachedKey, iv);
+    
+    // Cifra tutto lo store (Pratiche + Agenda)
+    const payload = JSON.stringify(memoryStore);
+    let encrypted = cipher.update(payload, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag();
+
+    const output = JSON.stringify({
+      v: 2, // Versione formato
+      salt: saltHex,
+      iv: iv.toString('hex'),
+      authTag: authTag.toString('hex'),
+      data: encrypted
     });
 
-    transaction(events);
-    return { success: true };
+    writeAtomic(DATA_PATH, output);
   },
 
   // --- SETTINGS & RECOVERY ---
@@ -173,45 +185,66 @@ module.exports = {
   async getSettings() {
     try {
       if (fs.existsSync(SETTINGS_PATH)) {
-        return JSON.parse(await fs.promises.readFile(SETTINGS_PATH, 'utf8'));
+        return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
       }
     } catch {}
     return { privacyBlurEnabled: true };
   },
 
-  async saveSettings(settings) {
-    await fs.promises.writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2));
-    return { success: true };
+  async saveSettings(data) {
+    // Merge con esistenti per non perdere recoveryHash se si salvano solo preferenze UI
+    const current = await this.getSettings();
+    const newSettings = { ...current, ...data };
+    writeAtomic(SETTINGS_PATH, JSON.stringify(newSettings, null, 2));
+    return true;
   },
 
   async resetWithRecovery(code) {
     try {
       const settings = await this.getSettings();
       if (!settings.recoveryHash || !settings.recoverySalt) {
-        return { success: false, error: 'Nessun codice di recupero impostato.' };
+        return { success: false, error: 'Nessun codice di recupero configurato.' };
       }
 
-      const hash = crypto.pbkdf2Sync(code.toUpperCase(), settings.recoverySalt, 100000, 64, 'sha512').toString('hex');
+      // Normalizza codice (rimuovi trattini e spazi, uppercase)
+      const cleanCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
       
-      if (hash === settings.recoveryHash) {
+      // A volte il codice salvato è "ABCD-1234", proviamo a verificare l'hash
+      // La logica di creazione sopra mette un trattino.
+      // Se l'utente inserisce "ABCD1234", dobbiamo gestire la formattazione.
+      // Per sicurezza verifichiamo l'hash così com'è o implementiamo una logica di normalizzazione robusta.
+      // Qui assumiamo che l'utente inserisca il codice ESATTO.
+      
+      // Prova 1: Codice pulito
+      let hash = hashRecoveryCode(cleanCode, settings.recoverySalt);
+      let match = (hash === settings.recoveryHash);
+
+      // Prova 2: Se fallisce, prova col formato con trattino (se l'utente l'ha omesso ma era salvato con)
+      if (!match && cleanCode.length === 8) {
+         const withDash = cleanCode.slice(0,4) + '-' + cleanCode.slice(4);
+         hash = hashRecoveryCode(withDash, settings.recoverySalt);
+         match = (hash === settings.recoveryHash);
+      }
+      
+      if (match) {
         this.deleteVault();
-        // Reset settings ma mantieni preferenze UI se vuoi
+        // Rimuovi dati di sicurezza ma mantieni preferenze
         delete settings.recoveryHash;
         delete settings.recoverySalt;
-        delete settings.vaultSalt;
         await this.saveSettings(settings);
         return { success: true };
       }
-      return { success: false, error: 'Codice non valido.' };
+      
+      return { success: false, error: 'Codice di recupero non valido.' };
     } catch (e) {
-      return { success: false, error: 'Errore durante il recupero.' };
+      console.error(e);
+      return { success: false, error: 'Errore durante il reset.' };
     }
   },
 
   deleteVault() {
     this.lockVault();
-    if (fs.existsSync(DB_PATH)) {
-      try { fs.unlinkSync(DB_PATH); } catch(e) { console.error('Delete error', e); }
-    }
+    if (fs.existsSync(DATA_PATH)) fs.unlinkSync(DATA_PATH);
+    // Nota: Manteniamo i settings (es. privacyBlur) ma resettiamo le chiavi di recupero nel metodo sopra
   }
 };

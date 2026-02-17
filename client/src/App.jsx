@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster } from 'react-hot-toast';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Lock } from 'lucide-react'; // Importiamo l'icona Lock
+import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Lock } from 'lucide-react';
 
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
@@ -16,41 +16,40 @@ import CreatePracticeModal from './components/CreatePracticeModal';
 
 export default function App() {
   const navigate = useNavigate();
-  const location = useLocation();
-
+  
+  // --- Stati Globali ---
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
+  const [version, setVersion] = useState('');
   
+  // --- Stati Dati (Lifted State) ---
   const [practices, setPractices] = useState([]);
   const [agendaEvents, setAgendaEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [version, setVersion] = useState('');
 
-  // 1. Init
+  // --- 1. Inizializzazione ---
   useEffect(() => {
-    window.api?.getSettings?.().then(s => {
-      if (s && typeof s.privacyBlurEnabled === 'boolean') {
-        setPrivacyEnabled(s.privacyBlurEnabled);
-      }
-    }).catch(() => {});
+    // Carica versione
+    if (window.api?.getAppVersion) {
+      window.api.getAppVersion().then(v => setVersion(v || '')).catch(() => {});
+    }
     
-    window.api?.getAppVersion?.().then(v => setVersion(v || ''));
+    // Carica impostazioni (gestisce il caso in cui l'API non sia esposta)
+    if (window.api?.getSettings) {
+      window.api.getSettings().then(s => {
+        if (s && typeof s.privacyBlurEnabled === 'boolean') {
+            setPrivacyEnabled(s.privacyBlurEnabled);
+        }
+      }).catch(err => console.warn("Errore caricamento settings:", err));
+    }
   }, []);
 
-  // 2. Privacy Blur Listener
-  useEffect(() => {
-    if (!window.api?.onBlur) return;
-    window.api.onBlur((val) => {
-      if (privacyEnabled) setBlurred(val);
-    });
-  }, [privacyEnabled]);
-
-  // 3. Lock Logic
-  const handleLockLocal = useCallback(async () => {
+  // --- 2. Gestione Sicurezza (Blur & Lock) ---
+  const handleLockLocal = useCallback(() => {
     setBlurred(false);
-    setPractices([]);
+    setPractices([]); // Pulisce la memoria visuale per sicurezza
     setAgendaEvents([]);
     setSelectedId(null);
     setIsLocked(true);
@@ -58,33 +57,61 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!window.api?.onLock) return;
-    window.api.onLock(() => {
-      if (privacyEnabled) handleLockLocal();
-    });
+    if (!window.api) return;
+
+    // Listener Privacy Blur
+    // Nota: Aggiungiamo controlli di esistenza per ogni funzione API
+    const removeBlur = window.api.onBlur ? window.api.onBlur((val) => {
+      if (privacyEnabled) setBlurred(val);
+    }) : () => {};
+
+    // Listener Lock (Automatico o da Tray)
+    const handleRemoteLock = () => handleLockLocal();
+    
+    const removeLock = window.api.onLock ? window.api.onLock(handleRemoteLock) : () => {};
+    const removeVaultLocked = window.api.onVaultLocked ? window.api.onVaultLocked(handleRemoteLock) : () => {};
+
+    return () => {
+      if (removeBlur) removeBlur();
+      if (removeLock) removeLock();
+      if (removeVaultLocked) removeVaultLocked();
+    };
   }, [privacyEnabled, handleLockLocal]);
 
-  useEffect(() => {
-    if (!window.api?.onVaultLocked) return;
-    window.api.onVaultLocked(handleLockLocal);
-  }, [handleLockLocal]);
+  const handleManualLock = async () => {
+    if (window.api?.lockVault) {
+        try {
+            await window.api.lockVault();
+        } catch (e) {
+            console.error("Errore durante il blocco manuale:", e);
+        }
+    }
+    handleLockLocal();
+  };
 
-  // 4. Sync
+  // --- 3. Logica Dati & Sync ---
+  
+  // Sincronizza scadenze delle pratiche nell'agenda globale
   const syncDeadlinesToAgenda = useCallback((newPractices, currentAgenda) => {
+    // Mantieni eventi manuali (non 'scadenza' generata automaticamente)
     const manualEvents = currentAgenda.filter(e => !e.autoSync);
     const syncedEvents = [];
+    
     newPractices.filter(p => p.status === 'active').forEach(p => {
       (p.deadlines || []).forEach(d => {
+        // ID univoco basato su pratica e data per evitare duplicati
+        const uniqueId = `deadline_${p.id}_${d.date}_${d.label.replace(/\s+/g, '_')}`;
+        
         syncedEvents.push({
-          id: `deadline_${p.id}_${d.date}_${d.label.replace(/\s/g, '_')}`,
+          id: uniqueId,
           title: `📋 ${d.label}`,
           date: d.date,
-          timeStart: '09:00',
+          timeStart: '09:00', // Orario default
           timeEnd: '10:00',
           category: 'scadenza',
           notes: `Fascicolo: ${p.client} — ${p.object}`,
           completed: false,
-          autoSync: true,
+          autoSync: true, // Flag per identificare eventi generati
           practiceId: p.id,
         });
       });
@@ -92,42 +119,45 @@ export default function App() {
     return [...manualEvents, ...syncedEvents];
   }, []);
 
-  // 5. Load/Save
   const loadAllData = useCallback(async () => {
+    if (!window.api) return;
     try {
       const pracs = await window.api.loadPractices().catch(() => []) || [];
       const agenda = await window.api.loadAgenda().catch(() => []) || [];
+      
       setPractices(pracs);
       const synced = syncDeadlinesToAgenda(pracs, agenda);
       setAgendaEvents(synced);
-      await window.api.saveAgenda(synced);
-    } catch (e) { console.error(e); }
+      
+      // Salva l'agenda sincronizzata per coerenza immediata
+      await window.api.saveAgenda(synced).catch(e => console.warn("Save sync agenda failed", e));
+    } catch (e) { 
+      console.error("Errore caricamento dati:", e); 
+    }
   }, [syncDeadlinesToAgenda]);
+
+  const handleUnlock = async () => {
+    setBlurred(false);
+    setIsLocked(false);
+    await loadAllData(); // Ricarica i dati freschi dopo lo sblocco
+  };
 
   const savePractices = async (newPractices) => {
     setPractices(newPractices);
-    await window.api.savePractices(newPractices);
-    const currentAgenda = await window.api.loadAgenda().catch(() => []) || [];
-    const synced = syncDeadlinesToAgenda(newPractices, currentAgenda);
-    setAgendaEvents(synced);
-    await window.api.saveAgenda(synced);
+    if (window.api?.savePractices) {
+        await window.api.savePractices(newPractices);
+        
+        // Aggiorna agenda
+        const currentAgenda = agendaEvents;
+        const synced = syncDeadlinesToAgenda(newPractices, currentAgenda);
+        setAgendaEvents(synced);
+        if (window.api?.saveAgenda) await window.api.saveAgenda(synced);
+    }
   };
 
   const saveAgenda = async (newEvents) => {
     setAgendaEvents(newEvents);
-    await window.api.saveAgenda(newEvents);
-  };
-
-  // 6. Actions
-  const handleUnlock = async () => {
-    setBlurred(false);
-    setIsLocked(false);
-    await loadAllData();
-  };
-
-  const handleLock = async () => {
-    await window.api.lockVault();
-    handleLockLocal();
+    if (window.api?.saveAgenda) await window.api.saveAgenda(newEvents);
   };
 
   const handleSelectPractice = (id) => {
@@ -135,10 +165,14 @@ export default function App() {
     navigate('/pratiche');
   };
 
+  // --- 4. Render ---
+  
+  // Vista Bloccata (Login)
   if (isLocked) {
     return (
       <>
         <WindowControls />
+        {/* Passiamo handleUnlock che caricherà i dati al successo */}
         <LoginScreen onUnlock={handleUnlock} />
       </>
     );
@@ -147,29 +181,34 @@ export default function App() {
   const selectedPractice = practices.find(p => p.id === selectedId);
 
   return (
-    <div className="app-layout">
-      {/* Privacy Shield (Blur protettivo) AGGIORNATO CON ICONA */}
+    <div className="flex h-screen bg-background text-text-primary overflow-hidden border border-white/5 rounded-lg shadow-2xl relative">
+      
+      {/* Privacy Shield (Overlay Sfocato) */}
       {privacyEnabled && blurred && (
         <div 
-          className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer"
-          onClick={handleLock}
+          className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer animate-fade-in"
+          onClick={handleManualLock}
+          title="Clicca per bloccare il Vault"
         >
           <div className="text-center">
             <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse border border-primary/20">
               <Lock size={40} className="text-primary" />
             </div>
             <h2 className="text-2xl font-bold text-white tracking-tight">LexFlow Protetto</h2>
-            <p className="text-text-muted text-sm mt-2">L'applicazione è offuscata per privacy.<br/>Clicca per bloccare completamente.</p>
+            <p className="text-text-muted text-sm mt-2">Contenuto nascosto per privacy.<br/>Clicca per bloccare il Vault.</p>
           </div>
         </div>
       )}
 
+      {/* Sidebar & Navigazione */}
       <Sidebar 
         version={version} 
-        onLock={handleLock} 
+        onLock={handleManualLock} 
+        activePage={location.pathname} // Passa la rotta attiva per l'evidenziazione
       />
 
-      <main className="flex-1 h-screen overflow-hidden relative flex flex-col">
+      {/* Main Content Area */}
+      <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-gradient-to-br from-background to-[#13141f]">
         <WindowControls />
         <Toaster
           position="bottom-right"
@@ -178,7 +217,7 @@ export default function App() {
           }}
         />
 
-        <div className="flex-1 overflow-hidden relative">
+        <div className="flex-1 overflow-auto p-8 pt-4">
           <Routes>
             <Route path="/" element={
               <Dashboard
@@ -221,12 +260,13 @@ export default function App() {
               />
             } />
             
-            <Route path="/settings" element={<SettingsPage onLock={handleLock} />} />
-            <Route path="/sicurezza" element={<SettingsPage onLock={handleLock} />} />
+            <Route path="/settings" element={<SettingsPage onLock={handleManualLock} />} />
+            <Route path="/sicurezza" element={<SettingsPage onLock={handleManualLock} />} />
           </Routes>
         </div>
       </main>
 
+      {/* Modale Creazione */}
       {showCreate && (
         <CreatePracticeModal
           onClose={() => setShowCreate(false)}

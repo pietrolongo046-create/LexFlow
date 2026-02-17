@@ -3,7 +3,7 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const keychainService = require('./services/keychain'); // Assicurati che questo file esista, altrimenti rimuovilo
+const keychainService = require('./services/keychain'); // Assicurati che questo file esista
 const storage = require('./storage');
 const biometrics = require('./biometrics');
 
@@ -12,7 +12,7 @@ const IS_MAC = process.platform === 'darwin';
 // --- 1. GESTIONE ERRORI GLOBALE ---
 process.on('uncaughtException', (error) => {
   console.error('CRITICAL MAIN ERROR:', error);
-  // Non uscire dall'app, prova a recuperare
+  // Non uscire dall'app, prova a recuperare per evitare crash improvvisi
 });
 
 // Traduzioni Menu
@@ -45,7 +45,7 @@ ipcMain.handle('vault-load-agenda', () => storage.loadAgenda());
 ipcMain.handle('vault-save-agenda', (_, data) => storage.saveAgenda(data));
 ipcMain.handle('vault-recovery-reset', (_, code) => storage.resetWithRecovery(code));
 
-// 2. Biometria (Sincronizzato con preload.js e biometrics.js)
+// 2. Biometria
 ipcMain.handle('bio-check', async () => {
   try { return await biometrics.isAvailable(); } catch { return false; }
 });
@@ -57,10 +57,8 @@ ipcMain.handle('bio-save', async (_, pwd) => {
 });
 ipcMain.handle('bio-login', async () => {
   try { 
-    // Ritorna la password decifrata o lancia errore se annullato/fallito
     return await biometrics.retrievePassword(); 
   } catch (e) { 
-    // Propaghiamo l'errore al frontend in modo che sappia che è fallito
     throw new Error('Auth failed'); 
   }
 });
@@ -83,16 +81,58 @@ ipcMain.handle('vault-reset', async () => {
   if (response === 1) {
     storage.lockVault();
     storage.deleteVault();
-    await biometrics.clear(); // Pulisce anche la biometria associata
+    await biometrics.clear(); 
     return { success: true };
   }
   return { success: false };
 });
 
-// 4. App Info & Utilities
+// 4. File System & Utilities (AGGIUNTE CRITICHE)
+
+// Permette di scegliere una cartella (per futuri backup o salvataggi)
+ipcMain.handle('select-folder', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+// Apre un file/cartella in modo sicuro (validando che esista)
+ipcMain.handle('open-path', async (_, p) => { 
+  if (!p || typeof p !== 'string') return;
+  const normalized = path.normalize(p);
+  if (fs.existsSync(normalized)) {
+    await shell.openPath(normalized); 
+  }
+});
+
+// Export PDF Sicuro: Riceve il buffer dal frontend e apre il dialog di salvataggio
+ipcMain.handle('export-pdf', async (_, { buffer, defaultName }) => {
+  if (!mainWindow) return { success: false };
+  
+  const { filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Salva PDF',
+    defaultPath: defaultName || 'documento.pdf',
+    filters: [{ name: 'PDF Document', extensions: ['pdf'] }]
+  });
+
+  if (!filePath) return { success: false, cancelled: true };
+
+  try {
+    // Scrive il buffer su disco
+    await fs.promises.writeFile(filePath, Buffer.from(buffer));
+    return { success: true, filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 5. App Info & Settings
 ipcMain.handle('get-is-mac', () => IS_MAC);
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-settings', () => storage.getSettings()); // Necessario per App.jsx
+ipcMain.handle('save-settings', (_, data) => storage.saveSettings(data)); // Necessario per SettingsPage
 
+// Export Backup Completo
 ipcMain.handle('vault-export', async (_, exportPassword) => {
   if (!mainWindow) return { success: false };
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
@@ -104,7 +144,6 @@ ipcMain.handle('vault-export', async (_, exportPassword) => {
   if (!filePath) return { success: false, cancelled: true };
 
   try {
-    // Logica di export (semplificata per leggibilità, assumendo storage.js gestisca il caricamento)
     const practices = await storage.loadData();
     const agenda = await storage.loadAgenda();
     const backupData = JSON.stringify({ 
@@ -158,14 +197,8 @@ function createWindow() {
   mainWindow.setContentProtection(true); // Anti-Screenshot
 
   // Caricamento interfaccia
-  // Assicurati che il percorso dist sia corretto
-  const startUrl = process.env.ELECTRON_START_URL || path.join(__dirname, '..', 'client', 'dist', 'index.html');
-  
-  if (startUrl.startsWith('http')) {
-    mainWindow.loadURL(startUrl);
-  } else {
-    mainWindow.loadFile(startUrl);
-  }
+  const startUrl = process.env.ELECTRON_START_URL || `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
+  mainWindow.loadURL(startUrl);
   
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
@@ -187,7 +220,7 @@ function createWindow() {
   mainWindow.on('blur', () => {
     blurTimestamp = Date.now();
     mainWindow.webContents.send('app-blur', true);
-    // Blocca il vault dopo 5 minuti di inattività (o meno, a seconda delle preferenze)
+    // Blocca il vault dopo 5 minuti di inattività
     blurTimer = setTimeout(() => { 
         if(mainWindow) mainWindow._shouldLockOnFocus = true; 
     }, 5 * 60 * 1000);
@@ -195,10 +228,7 @@ function createWindow() {
 
   mainWindow.on('focus', () => {
     if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
-    // Togli il blur solo se è passato poco tempo o se l'utente torna
-    if (Date.now() - blurTimestamp < 200) {
-        // Debounce per evitare flicker immediati
-    }
+    if (Date.now() - blurTimestamp < 200) { /* debounce */ }
     mainWindow.webContents.send('app-blur', false);
 
     if (mainWindow._shouldLockOnFocus) {
@@ -224,7 +254,6 @@ function createWindow() {
 
 function createTray() {
   const trayIconPath = path.join(__dirname, '..', 'build', 'lexflow-tray.png');
-  // Se l'icona non esiste, non creare la tray per evitare errori
   if (!fs.existsSync(trayIconPath)) return;
   
   const icon = nativeImage.createFromPath(trayIconPath).resize({ width: 18, height: 18 });
@@ -261,7 +290,6 @@ function buildMenu() {
 app.on('before-quit', () => { isQuitting = true; });
 
 app.whenReady().then(() => {
-  // Sicurezza CSP e Headers
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {

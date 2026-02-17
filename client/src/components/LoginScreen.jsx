@@ -119,6 +119,8 @@ export default function LoginScreen({ onUnlock }) {
     setLoadingText(isNew ? 'Creazione database sicuro...' : 'Verifica crittografica...');
 
     try {
+      if (!window.api) throw new Error("API non disponibile");
+      
       const result = await window.api.unlockVault(password);
       
       if (result.success) {
@@ -148,6 +150,8 @@ export default function LoginScreen({ onUnlock }) {
     setLoadingText('Autenticazione...');
     
     try {
+      if (!window.api) throw new Error("API non disponibile");
+      
       // Chiama la funzione esposta nel preload
       const savedPassword = await window.api.loginBio();
       

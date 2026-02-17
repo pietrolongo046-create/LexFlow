@@ -9,17 +9,19 @@ const FIELD_LABELS = {
   stra:    { counterparty: 'Controparte',    court: 'Sede',        code: 'Rif. Pratica' },
 };
 
+// Funzione di generazione grafica (Layout)
 export async function generatePracticePDF(practice) {
+  // Orientamento verticale, millimetri, A4
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const labels = FIELD_LABELS[practice.type] || FIELD_LABELS.civile;
   const pageW = doc.internal.pageSize.getWidth();
   let y = 20;
 
   // ===== Header =====
-  doc.setFillColor(13, 14, 22);
+  doc.setFillColor(13, 14, 22); // Background scuro
   doc.rect(0, 0, pageW, 40, 'F');
 
-  doc.setTextColor(128, 112, 208);
+  doc.setTextColor(128, 112, 208); // Primary Color
   doc.setFontSize(20);
   doc.setFont('helvetica', 'bold');
   doc.text('LEXFLOW', 20, y + 4);
@@ -35,7 +37,7 @@ export async function generatePracticePDF(practice) {
 
   y = 50;
 
-  // ===== Case Info =====
+  // ===== Info Fascicolo =====
   doc.setTextColor(50, 50, 70);
   doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');
@@ -66,7 +68,7 @@ export async function generatePracticePDF(practice) {
 
   y = doc.lastAutoTable.finalY + 12;
 
-  // ===== Deadlines =====
+  // ===== Scadenze =====
   if (practice.deadlines && practice.deadlines.length > 0) {
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
@@ -90,9 +92,11 @@ export async function generatePracticePDF(practice) {
     y = doc.lastAutoTable.finalY + 12;
   }
 
-  // ===== Tasks =====
+  // ===== Attività (Tasks) =====
   if (practice.tasks && practice.tasks.length > 0) {
+    // Controllo fine pagina
     if (y > 240) { doc.addPage(); y = 20; }
+    
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(50, 50, 70);
@@ -116,9 +120,10 @@ export async function generatePracticePDF(practice) {
     y = doc.lastAutoTable.finalY + 12;
   }
 
-  // ===== Diary =====
+  // ===== Diario =====
   if (practice.diary && practice.diary.length > 0) {
     if (y > 220) { doc.addPage(); y = 20; }
+    
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(50, 50, 70);
@@ -140,7 +145,7 @@ export async function generatePracticePDF(practice) {
     });
   }
 
-  // ===== Footer =====
+  // ===== Footer (Numeri Pagina) =====
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -156,29 +161,31 @@ export async function generatePracticePDF(practice) {
   return doc;
 }
 
+// Funzione di Esportazione Sicura (Interfacciata con API Electron)
 export async function exportPracticePDF(practice) {
   try {
+    // 1. Genera il documento PDF in memoria
     const doc = await generatePracticePDF(practice);
-    const clientSafe = (practice.client || 'fascicolo').replace(/[^a-zA-Z0-9àèéìòù ]/g, '').trim().replace(/\s+/g, '_');
+    
+    // 2. Prepara il nome del file pulito
+    const clientSafe = (practice.client || 'fascicolo')
+      .replace(/[^a-zA-Z0-9àèéìòù ]/g, '')
+      .trim()
+      .replace(/\s+/g, '_');
+      
+    const defaultName = `LexFlow_${clientSafe}_${new Date().toISOString().split('T')[0]}.pdf`;
 
-    // 1. Chiede all'utente dove salvare
-    const filePath = await window.api.showSaveDialog({
-      defaultPath: `LexFlow_${clientSafe}_${new Date().toISOString().split('T')[0]}.pdf`,
-      filters: [{ name: 'Documento PDF', extensions: ['pdf'] }],
-    });
+    // 3. Genera l'ArrayBuffer (Dati grezzi)
+    const pdfArrayBuffer = doc.output('arraybuffer');
 
-    if (!filePath) return false; // Utente ha annullato
-
-    // 2. Genera il buffer del PDF
-    const arrayBuffer = doc.output('arraybuffer');
-
-    // 3. Invia il buffer al Main process per la scrittura fisica su disco
-    // Questo aggira i limiti di sicurezza del renderer
-    const result = await window.api.saveFileBuffer(filePath, arrayBuffer);
+    // 4. Chiama il Backend Sicuro
+    // Non chiediamo il path qui. Il Main Process aprirà il dialogo di salvataggio
+    // e scriverà il file solo se l'utente conferma.
+    const result = await window.api.exportPDF(pdfArrayBuffer, defaultName);
 
     return result.success;
   } catch (error) {
-    console.error("Errore export PDF:", error);
+    console.error("Errore critico export PDF:", error);
     return false;
   }
 }

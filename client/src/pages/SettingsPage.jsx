@@ -1,162 +1,181 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Eye, Lock, Download, Trash2, Save, CheckCircle, AlertTriangle } from 'lucide-react';
+import { 
+  Shield, 
+  Lock, 
+  Eye, 
+  FileText, 
+  HardDrive, 
+  LogOut,
+  RefreshCw 
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function SettingsPage({ onLock }) {
-  const [settings, setSettings] = useState({ privacyBlurEnabled: true });
-  const [backupPwd, setBackupPwd] = useState('');
+  const [privacyEnabled, setPrivacyEnabled] = useState(true);
+  const [appVersion, setAppVersion] = useState('');
+  const [platform, setPlatform] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    window.api?.getSettings?.().then(setSettings).catch(console.error);
+    // Carica versione e piattaforma
+    if (window.api) {
+      window.api.getAppVersion().then(setAppVersion);
+      window.api.isMac().then(isMac => setPlatform(isMac ? 'macOS' : 'Windows'));
+      
+      // Carica impostazioni salvate
+      window.api.getSettings().then(settings => {
+        if (settings && typeof settings.privacyBlurEnabled === 'boolean') {
+          setPrivacyEnabled(settings.privacyBlurEnabled);
+        }
+      });
+    }
   }, []);
 
-  const togglePrivacy = async () => {
-    const newVal = !settings.privacyBlurEnabled;
-    const newSettings = { ...settings, privacyBlurEnabled: newVal };
-    setSettings(newSettings);
-    await window.api?.saveSettings?.(newSettings);
-    toast.success(`Privacy Shield ${newVal ? 'Attivato' : 'Disattivato'}`);
+  const handlePrivacyToggle = async () => {
+    const newValue = !privacyEnabled;
+    setPrivacyEnabled(newValue);
+    
+    try {
+      // Salva nel backend JSON
+      await window.api.saveSettings({ privacyBlurEnabled: newValue });
+      toast.success(newValue ? 'Privacy Blur Attivato' : 'Privacy Blur Disattivato');
+    } catch (error) {
+      console.error(error);
+      toast.error('Errore salvataggio impostazioni');
+      // Revert in caso di errore
+      setPrivacyEnabled(!newValue); 
+    }
   };
 
-  const handleBackup = async () => {
-    if (!backupPwd) return toast.error('Inserisci una password per il backup');
-    
+  const handleExportBackup = async () => {
+    const pwd = prompt("Inserisci una password per cifrare il backup:");
+    if (!pwd) return;
+
     setLoading(true);
+    const toastId = toast.loading('Esportazione in corso...');
+    
     try {
-      // Chiama la funzione exportVault (assicurati di averla aggiunta al preload.js)
-      const res = await window.api.exportVault(backupPwd);
-      if (res.success) {
-        toast.success('Backup esportato con successo!');
-        setBackupPwd('');
-      } else if (res.cancelled) {
-        // Utente ha annullato, non fare nulla
+      const result = await window.api.exportVault(pwd);
+      if (result.success) {
+        toast.success('Backup esportato con successo!', { id: toastId });
+      } else if (!result.cancelled) {
+        toast.error('Errore esportazione: ' + (result.error || 'Sconosciuto'), { id: toastId });
       } else {
-        toast.error('Errore durante il backup: ' + res.error);
+        toast.dismiss(toastId);
       }
     } catch (e) {
-      toast.error('Errore imprevisto durante il backup');
-      console.error(e);
+      toast.error('Errore critico backup', { id: toastId });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleReset = async () => {
-    const confirmed = confirm("ATTENZIONE: Questa operazione cancellerà TUTTI i dati e chiuderà l'app. Sei sicuro?");
-    if (confirmed) {
-      const res = await window.api.resetVault();
-      if (res.success) {
-        window.api.windowClose(); // Chiude l'app dopo il reset
-      }
-    }
-  };
-
   return (
-    <div className="main-content animate-slide-up max-w-4xl mx-auto pb-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-          <Shield className="text-primary" size={24} />
-          Impostazioni & Sicurezza
-        </h1>
-        <p className="text-text-muted text-sm mt-1">Gestisci la privacy e i dati del tuo studio.</p>
+    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
+      
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white tracking-tight mb-2">Impostazioni</h1>
+          <p className="text-text-muted text-sm">Gestisci sicurezza e preferenze di LexFlow.</p>
+        </div>
+        <div className="px-4 py-2 bg-white/5 rounded-lg border border-white/10 text-xs font-mono text-text-dim">
+          v{appVersion} • {platform}
+        </div>
       </div>
 
-      <div className="space-y-6">
-        {/* Sezione Privacy */}
-        <section className="glass-card p-6 border border-white/5">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Eye size={20} className="text-info" /> Privacy Visiva
-          </h2>
-          <div className="flex items-center justify-between">
-            <div className="max-w-md">
-              <p className="text-sm text-text font-medium">Oscura applicazione in background</p>
-              <p className="text-xs text-text-muted mt-1">
-                Se attivato, i contenuti sensibili verranno sfocati quando cambi finestra o riduci l'app a icona.
+      <div className="grid gap-6">
+        
+        {/* Sezione Sicurezza */}
+        <section className="glass-card p-6 space-y-6">
+          <div className="flex items-center gap-3 border-b border-white/5 pb-4 mb-4">
+            <Shield className="text-primary" size={20} />
+            <h2 className="text-lg font-bold text-white">Sicurezza & Privacy</h2>
+          </div>
+
+          {/* Privacy Blur Toggle */}
+          <div className="flex items-center justify-between group">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-white">Privacy Blur</span>
+                <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded border border-primary/20">RECCOMENDED</span>
+              </div>
+              <p className="text-xs text-text-muted max-w-md">
+                Sfoca automaticamente il contenuto dell'applicazione quando cambi finestra o perdi il focus, proteggendo i dati da sguardi indiscreti.
               </p>
             </div>
-            <button
-              onClick={togglePrivacy}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
-                settings.privacyBlurEnabled ? 'bg-primary' : 'bg-[#22263a]'
-              }`}
+            
+            <button 
+              onClick={handlePrivacyToggle}
+              className={`w-12 h-6 rounded-full transition-colors relative ${privacyEnabled ? 'bg-primary' : 'bg-white/10'}`}
             >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  settings.privacyBlurEnabled ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 ${privacyEnabled ? 'left-7' : 'left-1'}`} />
+            </button>
+          </div>
+
+          {/* Azioni Immediate */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            <button 
+              onClick={onLock}
+              className="flex items-center justify-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"
+            >
+              <Lock size={18} className="text-text-dim group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium">Blocca Vault Ora</span>
+            </button>
+            
+            <button 
+              onClick={() => {
+                if(confirm("Questa azione cancellerà tutte le credenziali biometriche salvate. Continuare?")) {
+                  window.api.clearBio().then(() => toast.success("Biometria resettata"));
+                }
+              }}
+              className="flex items-center justify-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"
+            >
+              <RefreshCw size={18} className="text-text-dim group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium">Resetta Biometria</span>
             </button>
           </div>
         </section>
 
-        {/* Sezione Backup */}
-        <section className="glass-card p-6 border border-white/5">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Save size={20} className="text-success" /> Backup Portatile
-          </h2>
-          <p className="text-sm text-text-muted mb-4">
-            Esporta tutti i fascicoli e l'agenda in un unico file criptato `.lex`. 
-            Potrai importarlo su un altro computer usando la password che imposti qui.
-          </p>
-          
-          <div className="flex items-end gap-3 bg-[#0c0d14]/50 p-4 rounded-xl border border-white/5">
-            <div className="flex-1">
-              <label className="text-xs font-bold text-text-dim uppercase mb-1 block">Password per questo backup</label>
-              <input 
-                type="password" 
-                placeholder="Scegli una password forte..."
-                className="input-field w-full"
-                value={backupPwd}
-                onChange={e => setBackupPwd(e.target.value)}
-              />
+        {/* Sezione Dati */}
+        <section className="glass-card p-6 space-y-6">
+          <div className="flex items-center gap-3 border-b border-white/5 pb-4 mb-4">
+            <HardDrive className="text-emerald-500" size={20} />
+            <h2 className="text-lg font-bold text-white">Gestione Dati</h2>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="font-medium text-white">Backup Crittografato</span>
+              <p className="text-xs text-text-muted">
+                Esporta tutti i tuoi fascicoli e l'agenda in un unico file `.lex` cifrato, trasportabile su altri dispositivi.
+              </p>
             </div>
             <button 
-              onClick={handleBackup}
-              disabled={loading || !backupPwd}
-              className="btn-primary h-[38px] flex items-center gap-2 px-6"
+              onClick={handleExportBackup} 
+              disabled={loading}
+              className="btn-secondary px-4 py-2 text-sm"
             >
-              {loading ? <span className="animate-spin">⏳</span> : <Download size={16} />}
-              <span>Esporta Dati</span>
+              {loading ? 'Esportazione...' : 'Esporta Backup'}
             </button>
           </div>
         </section>
+      </div>
 
-        {/* Zona Pericolo */}
-        <section className="glass-card p-6 border border-red-500/20 bg-red-500/5">
-          <h2 className="text-lg font-semibold text-red-400 mb-4 flex items-center gap-2">
-            <AlertTriangle size={20} /> Zona Pericolo
-          </h2>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 rounded-lg hover:bg-red-500/10 transition-colors">
-              <div>
-                <p className="text-sm font-bold text-white">Blocca Vault Immediatamente</p>
-                <p className="text-xs text-text-muted">Richiede la master password per rientrare.</p>
-              </div>
-              <button onClick={onLock} className="btn-secondary text-xs bg-transparent border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white">
-                <Lock size={14} className="mr-1" /> Blocca
-              </button>
-            </div>
-
-            <div className="h-px bg-red-500/20" />
-
-            <div className="flex items-center justify-between p-3 rounded-lg hover:bg-red-500/10 transition-colors">
-              <div>
-                <p className="text-sm font-bold text-red-400">Factory Reset</p>
-                <p className="text-xs text-red-300/60">Cancella irreversibilmente tutti i dati locali.</p>
-              </div>
-              <button onClick={handleReset} className="px-3 py-2 rounded bg-red-500/20 text-red-400 hover:bg-red-600 hover:text-white transition-all text-xs font-bold flex items-center gap-2">
-                <Trash2 size={14} /> ELIMINA TUTTO
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <div className="text-center pt-8 text-xs text-text-dim">
-          <p>LexFlow Secure Client • Crittografia AES-256-GCM</p>
-          <p className="opacity-50 mt-1">Nessun dato viene inviato al cloud.</p>
-        </div>
+      {/* Footer Danger Zone */}
+      <div className="pt-8 text-center">
+        <button 
+          onClick={async () => {
+            if(confirm("ATTENZIONE: Stai per cancellare l'intero database. Questa azione è irreversibile. Sei sicuro?")) {
+               const res = await window.api.resetVault();
+               if(res.success) window.location.reload();
+            }
+          }}
+          className="text-xs font-bold text-red-500/50 hover:text-red-500 uppercase tracking-widest transition-colors flex items-center justify-center gap-2 mx-auto"
+        >
+          <LogOut size={14} />
+          Factory Reset Vault
+        </button>
       </div>
     </div>
   );
