@@ -1,0 +1,48 @@
+[package]
+name = "lexflow"
+version = "1.9.14"
+description = "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge"
+authors = ["TechnoJaw"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+# Core & Serialization
+tauri = { version = "2.1.0", features = ["tray-icon", "macos-private-api"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Plugins
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-os = "2"
+tauri-plugin-clipboard-manager = "2"
+
+# Utilities
+dirs = "5"
+whoami = "1"
+open = "5"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Security (MIL-GRADE)
+aes-gcm = "0.10"
+argon2 = "0.5"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+zeroize = { version = "1.7", features = ["derive", "alloc"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }

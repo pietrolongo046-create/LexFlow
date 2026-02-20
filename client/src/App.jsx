@@ -263,6 +263,7 @@ export default function App() {
               <Route path="/" element={
                 <Dashboard
                   practices={practices}
+                  agendaEvents={agendaEvents}
                   onNavigate={navigate}
                   onSelectPractice={handleSelectPractice}
                   onNewPractice={() => setShowCreate(true)}
@@ -289,7 +290,7 @@ export default function App() {
               } />
               
               <Route path="/scadenze" element={
-                <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} />
+                <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} settings={settings} />
               } />
               
               <Route path="/agenda" element={
@@ -298,6 +299,7 @@ export default function App() {
                   onSaveAgenda={saveAgenda}
                   practices={practices}
                   onSelectPractice={handleSelectPractice}
+                  settings={settings}
                 />
               } />
               

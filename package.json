@@ -1,26 +1,26 @@
 {
   "name": "lexflow",
-  "version": "1.6.8",
+  "version": "1.10.0",
   "description": "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge",
   "author": "TechnoJaw",
   "private": true,
-  "main": "electron/main.js",
   "scripts": {
-    "dev:client": "cd client && npm run dev",
-    "dev": "cd client && npm run dev",
-    "build": "cd client && npm run build",
-    "electron": "cd client && npx vite build && cd .. && npx electron .",
-    "electron:dev": "npx electron .",
-    "dist:mac": "node -e \"const p=require('./package.json');const v=p.version.split('.');v[2]=+v[2]+1;if(+v[2]>=10){v[1]=+v[1]+1;v[2]=0;}p.version=v.join('.');require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\\n');console.log('v'+p.version)\" && cd client && npx vite build && cd .. && npx electron-builder --mac && npm run install-app",
-    "dist:win": "cd client && npx vite build && cd .. && npx electron-builder --win && npm run copy-win",
-    "dist:all": "node -e \"const p=require('./package.json');const v=p.version.split('.');v[2]=+v[2]+1;if(+v[2]>=10){v[1]=+v[1]+1;v[2]=0;}p.version=v.join('.');require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\\n');console.log('v'+p.version)\" && cd client && npx vite build && cd .. && npx electron-builder --mac --win && npm run install-app && npm run copy-win",
-    "install-app": "VER=$(node -p \"require('./package.json').version\") && APP=$(ls -d release/mac-arm64/*.app 2>/dev/null || ls -d release/mac/*.app 2>/dev/null) && rm -rf ~/Desktop/LexFlow.app && ditto \"$APP\" ~/Desktop/LexFlow.app && codesign --force --deep --sign - ~/Desktop/LexFlow.app 2>/dev/null; xattr -cr ~/Desktop/LexFlow.app; mkdir -p ~/Desktop/\"Le Mie App\"/LexFlow && rm -f ~/Desktop/\"Le Mie App\"/LexFlow/*.dmg ~/Desktop/\"Le Mie App\"/LexFlow/*.exe && for f in release/LexFlow-*-arm64.dmg; do cp \"$f\" ~/Desktop/\"Le Mie App\"/LexFlow/LexFlow_${VER}_arm64.dmg 2>/dev/null; done; for f in release/LexFlow-*.dmg; do echo \"$f\" | grep -q arm64 || cp \"$f\" ~/Desktop/\"Le Mie App\"/LexFlow/LexFlow_${VER}_x64.dmg 2>/dev/null; done; for f in release/\"LexFlow Setup\"*.exe; do cp \"$f\" ~/Desktop/\"Le Mie App\"/LexFlow/LexFlow_${VER}.exe 2>/dev/null; done; rm -rf release/mac-arm64 release/mac; killall Dock 2>/dev/null; true",
-    "copy-win": "VER=$(node -p \"require('./package.json').version\") && mkdir -p ~/Desktop/\"Le Mie App\"/LexFlow && rm -f ~/Desktop/\"Le Mie App\"/LexFlow/*.exe && for f in release/\"LexFlow Setup\"*.exe; do cp \"$f\" ~/Desktop/\"Le Mie App\"/LexFlow/LexFlow_${VER}.exe 2>/dev/null; done; true"
+    "dev": "npx @tauri-apps/cli dev",
+    "build": "npx @tauri-apps/cli build --bundles app",
+    "build:dmg": "npx @tauri-apps/cli build --bundles dmg",
+    "build:all": "npx @tauri-apps/cli build",
+    "build:mac-arm": "npx @tauri-apps/cli build --target aarch64-apple-darwin --bundles app",
+    "build:mac-intel": "npx @tauri-apps/cli build --target x86_64-apple-darwin --bundles app",
+    "build:win": "npx @tauri-apps/cli build --target x86_64-pc-windows-msvc",
+    "build:ios": "npx @tauri-apps/cli ios build",
+    "build:android": "npx @tauri-apps/cli android build",
+    "deploy:desktop": "echo \"Implement deploy:desktop workflow (see BUILD_MASTER.md)\"",
+    "deploy:releases": "echo \"Implement deploy:releases workflow (see BUILD_MASTER.md)\"",
+    "install": "npm run build && npm run deploy:desktop",
+    "icons": "python3 scripts/generate-icons.py"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
-    "electron": "^40.2.1",
-    "electron-builder": "^26.7.0",
     "vite": "^7.3.1"
   },
   "build": {
@@ -30,7 +30,6 @@
       "output": "release"
     },
     "files": [
-      "electron/**/*",
       "client/dist/**/*",
       "node_modules/**/*",
       "package.json",
@@ -73,7 +72,6 @@
     "asar": true
   },
   "dependencies": {
-    "electron-updater": "^6.7.3",
     "i18next": "^25.8.10",
     "i18next-browser-languagedetector": "^8.2.1",
     "keytar": "^7.9.0",

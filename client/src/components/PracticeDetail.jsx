@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  ArrowLeft, Calendar, CheckSquare, FileText, 
+  ArrowLeft, Calendar, FileText, 
   Clock, Plus, X, Trash2, Send, FolderOpen, 
-  FolderPlus, Archive, RotateCcw, AlertCircle
+  FolderPlus, Archive, RotateCcw, Lock, ChevronDown,
+  FilePlus, Info
 } from 'lucide-react';
 import { exportPracticePDF } from '../utils/pdfGenerator';
 import toast from 'react-hot-toast';
 
 export default function PracticeDetail({ practice, onBack, onUpdate }) {
-  const [activeTab, setActiveTab] = useState('overview'); // overview, tasks, diary, deadlines
+  const [activeTab, setActiveTab] = useState('diary'); // diary, docs, deadlines, info
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
   
   // Stati per i form
-  const [newTask, setNewTask] = useState('');
   const [newNote, setNewNote] = useState('');
   const [newDeadlineLabel, setNewDeadlineLabel] = useState('');
   const [newDeadlineDate, setNewDeadlineDate] = useState('');
@@ -22,9 +23,9 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const formatDate = (d) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
 
   // --- Handlers: Status & Folder ---
-  const toggleStatus = () => {
-    const newStatus = practice.status === 'active' ? 'closed' : 'active';
+  const setStatus = (newStatus) => {
     update({ status: newStatus });
+    setShowStatusMenu(false);
     toast.success(newStatus === 'active' ? 'Fascicolo riaperto' : 'Fascicolo archiviato');
   };
 
@@ -45,26 +46,24 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     if (success) toast.success('PDF salvato correttamente');
   };
 
-  // --- Handlers: Tasks ---
-  const toggleTask = (idx) => {
-    const updatedTasks = [...(practice.tasks || [])];
-    updatedTasks[idx].done = !updatedTasks[idx].done;
-    update({ tasks: updatedTasks });
+  // --- Handlers: PDF Upload ---
+  const handleUploadPDF = async () => {
+    try {
+      const result = await window.api.selectFolder(); // uses select_file which returns {name, path}
+      if (result) {
+        const attachments = [...(practice.attachments || []), { name: result.split('/').pop(), path: result, addedAt: new Date().toISOString() }];
+        update({ attachments });
+        toast.success('Documento aggiunto al vault');
+      }
+    } catch (e) {
+      toast.error('Errore nel caricamento');
+    }
   };
 
-  const deleteTask = (idx) => {
-    const updatedTasks = (practice.tasks || []).filter((_, i) => i !== idx);
-    update({ tasks: updatedTasks });
-    toast.success('Attività eliminata');
-  };
-
-  const addTask = (e) => {
-    e.preventDefault();
-    if (!newTask.trim()) return;
-    const task = { text: newTask, done: false, date: new Date().toISOString() };
-    update({ tasks: [task, ...(practice.tasks || [])] });
-    setNewTask('');
-    toast.success('Attività aggiunta');
+  const removeAttachment = (idx) => {
+    const attachments = (practice.attachments || []).filter((_, i) => i !== idx);
+    update({ attachments });
+    toast.success('Documento rimosso');
   };
 
   // --- Handlers: Diary ---
@@ -83,7 +82,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     toast.success('Nota eliminata');
   };
 
-  // --- Handlers: Deadlines (RIPRISTINATO) ---
+  // --- Handlers: Deadlines ---
   const addDeadline = (e) => {
     e.preventDefault();
     if (!newDeadlineLabel.trim() || !newDeadlineDate) return;
@@ -92,7 +91,6 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
       date: newDeadlineDate, 
       label: newDeadlineLabel.trim() 
     }];
-    // Ordina per data
     deadlines.sort((a, b) => new Date(a.date) - new Date(b.date));
     
     update({ deadlines });
@@ -140,163 +138,71 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-white">{practice.client}</h1>
-              <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider border ${
-                practice.status === 'active' 
-                  ? 'bg-green-500/10 text-green-400 border-green-500/20' 
-                  : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-              }`}>
-                {practice.status === 'active' ? 'Attivo' : 'Archiviato'}
-              </span>
             </div>
-            <p className="text-xs text-text-dim mt-0.5">{practice.object}</p>
+            <p className="text-xs text-text-dim mt-0.5">
+              {practice.code ? `RG ${practice.code}` : practice.object}
+            </p>
           </div>
         </div>
         
         <div className="flex items-center gap-2">
-          {/* Pulsanti Cartella */}
-          {practice.folderPath ? (
-            <button onClick={openFolder} className="btn-secondary text-xs flex items-center gap-2" title={practice.folderPath}>
-              <FolderOpen size={14} /> Apri Cartella
-            </button>
-          ) : (
-            <button onClick={linkFolder} className="btn-secondary text-xs flex items-center gap-2">
-              <FolderPlus size={14} /> Collega
-            </button>
-          )}
-
-          {/* Export & Status */}
-          <button onClick={handleExport} className="btn-secondary text-xs flex items-center gap-2">
-            <FileText size={14} /> PDF
-          </button>
-          
+          {/* Pulsante Proteggi */}
           <button 
-            onClick={toggleStatus} 
-            className={`btn-secondary text-xs flex items-center gap-2 ${practice.status === 'active' ? 'hover:text-red-400 hover:border-red-400/30' : 'hover:text-green-400 hover:border-green-400/30'}`}
+            onClick={handleExport} 
+            className="btn-secondary text-xs flex items-center gap-2"
           >
-            {practice.status === 'active' ? <Archive size={14} /> : <RotateCcw size={14} />}
+            <Lock size={14} /> Proteggi
           </button>
+
+          {/* Dropdown Status */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowStatusMenu(!showStatusMenu)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
+                practice.status === 'active' 
+                  ? 'bg-green-500/10 text-green-400 border-green-500/20' 
+                  : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-current" />
+              {practice.status === 'active' ? 'Attivo' : 'Archiviato'}
+              <ChevronDown size={14} />
+            </button>
+            
+            {showStatusMenu && (
+              <div className="absolute right-0 top-full mt-2 bg-[#14151d] border border-white/10 rounded-xl shadow-2xl z-50 py-2 min-w-[200px] animate-fade-in">
+                <button 
+                  onClick={() => setStatus('active')}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-white/5 transition-colors text-left"
+                >
+                  <span className="w-2 h-2 rounded-full bg-green-400" />
+                  <span className="text-green-400 font-bold">Imposta Attivo</span>
+                </button>
+                <button 
+                  onClick={() => setStatus('closed')}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-white/5 transition-colors text-left"
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="text-amber-400 font-bold">Archivia Fascicolo</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex border-b border-[#22263a] px-6">
-        <TabButton id="overview" label="Panoramica" icon={FileText} />
-        <TabButton id="tasks" label="Attività" icon={CheckSquare} count={(practice.tasks || []).filter(t => !t.done).length} />
-        <TabButton id="diary" label="Diario" icon={Clock} count={(practice.diary || []).length} />
+        <TabButton id="diary" label="Diario Cronologico" icon={Clock} count={(practice.diary || []).length} />
+        <TabButton id="docs" label="Documentazione PDF" icon={FileText} count={(practice.attachments || []).length} />
         <TabButton id="deadlines" label="Scadenze" icon={Calendar} count={(practice.deadlines || []).length} />
+        <TabButton id="info" label="Info Pratica" icon={Info} />
       </div>
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
         
-        {/* VIEW: PANORAMICA */}
-        {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-6">
-              <div className="glass-card p-6">
-                <h3 className="text-sm font-bold text-text-muted uppercase tracking-wider mb-4 border-b border-white/5 pb-2">Dettagli Fascicolo</h3>
-                <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
-                  <div>
-                    <span className="block text-xs text-text-dim mb-1">Tipo Materia</span>
-                    <span className="text-white font-medium capitalize">{practice.type}</span>
-                  </div>
-                  <div>
-                    <span className="block text-xs text-text-dim mb-1">Controparte</span>
-                    <span className="text-white font-medium">{practice.counterparty || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-xs text-text-dim mb-1">Tribunale / Sede</span>
-                    <span className="text-white font-medium">{practice.court || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-xs text-text-dim mb-1">Riferimento / RG</span>
-                    <span className="text-white font-medium font-mono bg-white/5 px-2 py-1 rounded inline-block">{practice.code || '—'}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="glass-card p-6">
-                <h3 className="text-sm font-bold text-text-muted uppercase tracking-wider mb-4">Descrizione</h3>
-                <p className="text-text-muted text-sm leading-relaxed whitespace-pre-line">
-                  {practice.description || "Nessuna descrizione aggiuntiva inserita per questo fascicolo."}
-                </p>
-              </div>
-            </div>
-
-            {/* Side Card: Prossime Scadenze (Solo lettura in Overview) */}
-            <div className="glass-card p-5 h-fit border-l-4 border-warning/50">
-              <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                <Calendar size={16} className="text-warning" /> Scadenze Imminenti
-              </h3>
-              {!practice.deadlines?.length ? (
-                <p className="text-xs text-text-dim italic">Nessuna scadenza.</p>
-              ) : (
-                <div className="space-y-3">
-                  {practice.deadlines.slice(0, 3).map((d, i) => (
-                    <div key={i} className="flex gap-3 text-sm border-b border-white/5 pb-2 last:border-0">
-                      <div className="flex flex-col items-center justify-center bg-[#1a1c28] px-2 py-1 rounded border border-white/10 min-w-[50px]">
-                        <span className="text-[10px] text-text-dim uppercase">{new Date(d.date).toLocaleDateString('it-IT', { month: 'short' })}</span>
-                        <span className="text-lg font-bold text-white leading-none">{new Date(d.date).getDate()}</span>
-                      </div>
-                      <div>
-                        <p className="font-medium text-white">{d.label}</p>
-                        <p className="text-[10px] text-text-muted mt-0.5">Vedi tab Scadenze per dettagli</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW: ATTIVITÀ (TASKS) */}
-        {activeTab === 'tasks' && (
-          <div className="max-w-3xl mx-auto">
-            <form onSubmit={addTask} className="mb-6 flex gap-2">
-              <div className="relative flex-1">
-                <Plus size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
-                <input
-                  type="text"
-                  className="input-field pl-10 w-full"
-                  placeholder="Aggiungi una nuova attività..."
-                  value={newTask}
-                  onChange={e => setNewTask(e.target.value)}
-                />
-              </div>
-              <button type="submit" disabled={!newTask.trim()} className="btn-primary px-4">Aggiungi</button>
-            </form>
-
-            <div className="space-y-2">
-              {(!practice.tasks || practice.tasks.length === 0) && (
-                <div className="text-center py-10 text-text-dim">
-                  <CheckSquare size={32} className="mx-auto mb-2 opacity-50" />
-                  <p>Nessuna attività da completare</p>
-                </div>
-              )}
-              {practice.tasks?.map((task, idx) => (
-                <div key={idx} className="glass-card p-3 flex items-center gap-3 group hover:border-primary/30 transition-colors">
-                  <button
-                    onClick={() => toggleTask(idx)}
-                    className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                      task.done ? 'bg-primary border-primary text-black' : 'border-text-dim hover:border-primary'
-                    }`}
-                  >
-                    {task.done && <X size={14} strokeWidth={4} />}
-                  </button>
-                  <span className={`flex-1 text-sm ${task.done ? 'text-text-dim line-through decoration-primary/50' : 'text-white'}`}>
-                    {task.text}
-                  </span>
-                  <button onClick={() => deleteTask(idx)} className="opacity-0 group-hover:opacity-100 p-2 text-text-dim hover:text-red-400 transition-all">
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW: DIARIO */}
+        {/* ═══ TAB: DIARIO CRONOLOGICO ═══ */}
         {activeTab === 'diary' && (
           <div className="max-w-3xl mx-auto h-full flex flex-col">
             <div className="flex-1 space-y-6 mb-6">
@@ -353,10 +259,84 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           </div>
         )}
 
-        {/* VIEW: SCADENZE (NUOVO TAB RIPRISTINATO) */}
+        {/* ═══ TAB: DOCUMENTAZIONE PDF ═══ */}
+        {activeTab === 'docs' && (
+          <div className="max-w-3xl mx-auto">
+            {/* 2 Card azione */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              <div 
+                onClick={handleUploadPDF}
+                className="glass-card p-8 flex items-start gap-4 cursor-pointer hover:bg-white/5 hover:border-primary/20 transition-all border border-white/5 group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                  <FilePlus size={24} className="text-primary" />
+                </div>
+                <div>
+                  <p className="text-base font-bold text-white">Carica PDF</p>
+                  <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Aggiungi file al vault</p>
+                </div>
+              </div>
+
+              <div 
+                onClick={openFolder}
+                className={`glass-card p-8 flex items-start gap-4 border border-white/5 transition-all ${
+                  practice.folderPath 
+                    ? 'cursor-pointer hover:bg-white/5 hover:border-white/20' 
+                    : 'opacity-50'
+                }`}
+              >
+                <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
+                  <FolderOpen size={24} className="text-text-muted" />
+                </div>
+                <div>
+                  <p className="text-base font-bold text-white">Sfoglia Locale</p>
+                  <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Apri cartella collegata</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Se non c'è cartella collegata: pulsante collega */}
+            {!practice.folderPath && (
+              <div className="text-center mb-6">
+                <button onClick={linkFolder} className="btn-secondary text-xs">
+                  <FolderPlus size={14} /> Collega una cartella locale
+                </button>
+              </div>
+            )}
+
+            {/* Lista allegati crittografati */}
+            <div>
+              <h3 className="text-[10px] font-black text-text-dim uppercase tracking-[2px] mb-4">Allegati Crittografati</h3>
+              {(!practice.attachments || practice.attachments.length === 0) ? (
+                <p className="text-sm text-text-dim italic">Nessun PDF collegato.</p>
+              ) : (
+                <div className="space-y-2">
+                  {practice.attachments.map((att, idx) => (
+                    <div key={idx} className="glass-card p-3 flex items-center gap-3 group hover:border-primary/30 transition-colors">
+                      <FileText size={16} className="text-primary flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{att.name}</p>
+                        <p className="text-[10px] text-text-dim">
+                          {att.addedAt ? formatDate(att.addedAt) : ''}
+                        </p>
+                      </div>
+                      <button onClick={() => att.path && window.api.openPath(att.path)} className="btn-ghost text-xs p-2">
+                        <FolderOpen size={14} />
+                      </button>
+                      <button onClick={() => removeAttachment(idx)} className="opacity-0 group-hover:opacity-100 p-2 text-text-dim hover:text-red-400 transition-all">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ═══ TAB: SCADENZE ═══ */}
         {activeTab === 'deadlines' && (
           <div className="max-w-3xl mx-auto">
-            {/* Form Scadenze */}
             <form onSubmit={addDeadline} className="mb-6 flex gap-2">
               <input
                 className="input-field flex-1"
@@ -379,7 +359,6 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
               </button>
             </form>
 
-            {/* Lista Scadenze */}
             <div className="space-y-2">
               {(!practice.deadlines || practice.deadlines.length === 0) ? (
                  <div className="text-center py-10 text-text-dim">
@@ -417,6 +396,46 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
                   );
                 })
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ═══ TAB: INFO PRATICA ═══ */}
+        {activeTab === 'info' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            {/* Dati Generali */}
+            <div className="glass-card p-6">
+              <h3 className="text-sm font-bold text-text-muted uppercase tracking-wider mb-5 border-b border-white/5 pb-2">Dati Generali</h3>
+              <div className="grid grid-cols-2 gap-y-5 gap-x-8 text-sm">
+                <div>
+                  <span className="block text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">Materia</span>
+                  <span className="text-white font-medium capitalize">{
+                    {civile:'Civile', penale:'Penale', lavoro:'Lavoro', amm:'Amministrativo', stra:'Stragiudiziale'}[practice.type] || practice.type
+                  }</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">Controparte</span>
+                  <span className="text-white font-medium">{practice.counterparty || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">Tribunale</span>
+                  <span className="text-white font-medium">{practice.court || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">Apertura</span>
+                  <span className="text-white font-medium">
+                    {practice.createdAt ? new Date(practice.createdAt).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' }) : 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Note Strategiche */}
+            <div className="glass-card p-6">
+              <h3 className="text-sm font-bold text-text-muted uppercase tracking-wider mb-5 border-b border-white/5 pb-2">Note Strategiche</h3>
+              <p className="text-sm text-text-muted whitespace-pre-line leading-relaxed">
+                {practice.description || 'Nessun appunto registrato.'}
+              </p>
             </div>
           </div>
         )}

@@ -40,3 +40,6 @@ npm-debug.log*
 
 # LexFlow License keys (private — never commit!)
 scripts/.lexflow-keys.json
+web-dist/
+release/
+electron/

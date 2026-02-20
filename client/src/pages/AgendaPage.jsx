@@ -11,7 +11,13 @@ import {
   Calendar, 
   Filter, 
   AlertCircle, 
-  BarChart3 
+  BarChart3,
+  Bell,
+  BellRing,
+  Settings2,
+  Sunrise,
+  Sun,
+  Moon
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -557,11 +563,138 @@ function MonthView({ events, onEdit, onAdd, activeFilters }) {
   );
 }
 
+// --- Popup Impostazioni Avvisi ---
+function NotificationSettingsPopup({ settings, onSave, onClose }) {
+  const [notifyEnabled, setNotifyEnabled] = useState(settings?.notifyEnabled ?? true);
+  const [preavviso, setPreavviso] = useState(settings?.preavviso ?? 30);
+  const [briefingMattina, setBriefingMattina] = useState(settings?.briefingMattina ?? '08:30');
+  const [briefingPomeriggio, setBriefingPomeriggio] = useState(settings?.briefingPomeriggio ?? '14:30');
+  const [briefingSera, setBriefingSera] = useState(settings?.briefingSera ?? '19:30');
+
+  const PREAVVISO_OPTIONS = [
+    { value: 5, label: '5 min' },
+    { value: 10, label: '10 min' },
+    { value: 15, label: '15 min' },
+    { value: 30, label: '30 min' },
+    { value: 60, label: '1 ora' },
+    { value: 120, label: '2 ore' },
+    { value: 1440, label: '1 giorno' },
+  ];
+
+  const handleSave = async () => {
+    const updated = {
+      ...settings,
+      notifyEnabled,
+      preavviso,
+      briefingMattina,
+      briefingPomeriggio,
+      briefingSera,
+    };
+    try {
+      await window.api.saveSettings(updated);
+      await window.api.syncNotificationSchedule({ briefingMattina, briefingPomeriggio, briefingSera });
+      onSave(updated);
+      toast.success('Impostazioni avvisi salvate');
+      onClose();
+    } catch (e) {
+      toast.error('Errore nel salvataggio');
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="glass-card border border-white/10 shadow-2xl p-6 animate-fade-in" onClick={e => e.stopPropagation()} style={{ maxWidth: 400, width: '100%' }}>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
+              <BellRing size={18} className="text-amber-400" />
+            </div>
+            <h3 className="text-base font-bold text-white uppercase tracking-wide">Impostazioni Avvisi</h3>
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-white transition"><X size={20}/></button>
+        </div>
+
+        <div className="space-y-5">
+          {/* Preavviso Standard — Pill selector */}
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2.5 block">Preavviso Standard</label>
+            <div className="flex flex-wrap gap-1.5">
+              {PREAVVISO_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPreavviso(opt.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                    preavviso === opt.value
+                      ? 'bg-primary text-black border-primary shadow-[0_0_12px_rgba(212,169,64,0.3)]'
+                      : 'bg-white/[0.04] text-text-muted border-white/5 hover:bg-white/[0.08] hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Toggle Notifiche */}
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm text-white font-medium">Attiva Notifiche Desktop</p>
+              <p className="text-[10px] text-text-dim">Ricevi promemoria prima degli impegni</p>
+            </div>
+            <button
+              onClick={() => setNotifyEnabled(!notifyEnabled)}
+              className={`w-11 h-6 rounded-full transition-all duration-300 relative ${
+                notifyEnabled ? 'bg-primary' : 'bg-white/10'
+              }`}
+            >
+              <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
+                notifyEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
+            </button>
+          </div>
+
+          {/* Orari Briefing — NO EMOJI, icone SVG */}
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-3 block">Orari Briefing</label>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm text-text-muted">
+                  <Sunrise size={15} className="text-amber-400" /> Mattina
+                </span>
+                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingMattina} onChange={e => setBriefingMattina(e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm text-text-muted">
+                  <Sun size={15} className="text-orange-400" /> Pomeriggio
+                </span>
+                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingPomeriggio} onChange={e => setBriefingPomeriggio(e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm text-text-muted">
+                  <Moon size={15} className="text-sky-400" /> Sera
+                </span>
+                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingSera} onChange={e => setBriefingSera(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          <button onClick={handleSave} className="btn-primary w-full py-2.5 text-sm mt-2">
+            Salva Impostazioni
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Componente Principale Agenda ---
-export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSelectPractice }) {
+export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSelectPractice, settings }) {
   const [view, setView] = useState('today');
   const [modalEvent, setModalEvent] = useState(null);
   const [activeFilters, setActiveFilters] = useState([]);
+  const [showNotifPopup, setShowNotifPopup] = useState(false);
+  const [localSettings, setLocalSettings] = useState(settings || {});
   const events = agendaEvents || [];
 
   const toggleFilter = (cat) => setActiveFilters(prev => 
@@ -589,13 +722,25 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
       {/* BARRA SUPERIORE OTTIMIZZATA */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 mb-4 px-1 flex-shrink-0">
         
-        {/* Selettore Vista */}
-        <div className="glass-card p-1 flex gap-1 self-start">
-          {views.map(({ key, label, icon: Icon }) => (
-            <button key={key} onClick={() => setView(key)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition ${view === key ? 'bg-primary text-black shadow-[0_0_15px_rgba(212,169,64,0.4)]' : 'text-text-muted hover:text-white hover:bg-white/5'}`}>
-              <Icon size={14}/> {label}
-            </button>
-          ))}
+        {/* Selettore Vista + Bell */}
+        <div className="flex items-center gap-2 self-start">
+          <div className="glass-card p-1 flex gap-1">
+            {views.map(({ key, label, icon: Icon }) => (
+              <button key={key} onClick={() => setView(key)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition ${view === key ? 'bg-primary text-black shadow-[0_0_15px_rgba(212,169,64,0.4)]' : 'text-text-muted hover:text-white hover:bg-white/5'}`}>
+                <Icon size={14}/> {label}
+              </button>
+            ))}
+          </div>
+          <button 
+            onClick={() => setShowNotifPopup(true)} 
+            className="glass-card p-2.5 rounded-xl hover:bg-white/5 transition-colors text-text-muted hover:text-amber-400 relative"
+            title="Impostazioni Avvisi"
+          >
+            <Bell size={18} />
+            {localSettings?.notifyEnabled && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400" />
+            )}
+          </button>
         </div>
 
         {/* BARRA FILTRI CATEGORIE - NUOVO DESIGN RESPONSIVE CON SCROLL ORIZZONTALE */}
@@ -656,6 +801,13 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
       </div>
 
       {modalEvent && <EventModal event={modalEvent.event} onSave={handleSave} onDelete={handleDelete} onClose={() => setModalEvent(null)} />}
+      {showNotifPopup && (
+        <NotificationSettingsPopup 
+          settings={localSettings} 
+          onSave={(s) => setLocalSettings(s)} 
+          onClose={() => setShowNotifPopup(false)} 
+        />
+      )}
     </div>
   );
 }
